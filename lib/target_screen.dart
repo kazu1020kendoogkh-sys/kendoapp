@@ -169,12 +169,11 @@ class TargetList extends StatelessWidget {
     if (year != 0) {
       query = query.where('year', isEqualTo: year);
     }
-
     if (type != '年間' && month != 0) {
       query = query.where('month', isEqualTo: month);
     }
 
-    // --- 👈 1. ページ最上部に表示する大きめのタイトル文字を作成 ---
+    // 大きめのヘッダータイトル作成
     String headerTitle = '';
     headerTitle += '$type目標';
     if (year == 0) {
@@ -194,95 +193,113 @@ class TargetList extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // --- 👈 2. 大きめのヘッダー表示エリアを追加 ---
+        // 固定ヘッダー
         Padding(
           padding: const EdgeInsets.only(left: 20, top: 20, right: 20, bottom: 8),
           child: Row(
             children: [
               const Icon(Icons.calendar_today, size: 20, color: Colors.teal),
               const SizedBox(width: 8),
-              Text(
-                headerTitle,
-                style: const TextStyle(
-                  fontSize: 18, 
-                  fontWeight: FontWeight.bold, 
-                  color: Colors.black87,
-                ),
-              ),
+              Text(headerTitle, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
             ],
           ),
         ),
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 20),
-          child: Divider(thickness: 1, color: Colors.black12), // 下線をつけてスッキリさせる
+          child: Divider(thickness: 1, color: Colors.black12),
         ),
 
-        // 3. 残りのスペースにリストを表示（Expandedで包む）
+        // リスト表示エリア
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
             stream: query.orderBy('createdAt', descending: true).snapshots(),
             builder: (context, snapshot) {
               if (snapshot.hasError) return const Center(child: Text('エラーが発生しました'));
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-              
               if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                 return Center(child: Text('目標は未設定です', style: TextStyle(color: Colors.grey[600])));
               }
 
-              return ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                itemCount: snapshot.data!.docs.length,
-                itemBuilder: (context, index) {
-                  final doc = snapshot.data!.docs[index];
-                  final data = doc.data() as Map<String, dynamic>;
-                  
-                  String topLabel = '';
-                  if (year == 0 && data['year'] != null) {
-                    topLabel += '${data['year']}年 ';
-                  }
-                  if (month == 0 && data['month'] != null && data['month'] != 0) {
-                    topLabel += '${data['month']}月 ';
-                  }
+              final docs = snapshot.data!.docs;
 
-                  Widget cardWidget = Card(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    child: ListTile(
-                      leading: Icon(type == '週間' ? Icons.looks_one : Icons.star, color: Colors.teal),
-                      title: Text(data['title'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: type == '週間' && data['week'] != null && data['week'] != ''
-                          ? Text(data['week'])
-                          : null,
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline, color: Colors.red),
-                        onPressed: () => FirebaseFirestore.instance.collection('targets').doc(doc.id).delete(),
+              // 👈 【超重要】データをグループ分けする処理
+              // 週間目標なら「〇年〇月」、月間目標なら「〇年」をキー（親玉）にして、データを分類します。
+              Map<String, List<DocumentSnapshot>> groupedData = {};
+              
+              for (var doc in docs) {
+                final data = doc.data() as Map<String, dynamic>;
+                String groupKey = '';
+                
+                if (type == '週間') {
+                  // 週間目標は「年・月単位」でまとめる
+                  groupKey = '${data['year'] ?? 0}年 ${data['month'] ?? 0}月';
+                } else if (type == '月間') {
+                  // 月間目標は「年単位」でまとめる
+                  groupKey = '${data['year'] ?? 0}年';
+                } else {
+                  // 年間目標はまとめる必要がないので空のまま
+                  groupKey = '';
+                }
+
+                if (!groupedData.containsKey(groupKey)) {
+                  groupedData[groupKey] = [];
+                }
+                groupedData[groupKey]!.add(doc);
+              }
+
+              // 年間目標の場合は、今まで通りシンプルに並べる
+              if (type == '年間' || groupedData.containsKey('')) {
+                return ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: docs.length,
+                  itemBuilder: (context, index) => _buildTargetTile(docs[index], type),
+                );
+              }
+
+              // 👈 月間・週間目標の場合は、グループ化された塊ごとにカードを作って表示
+              final groupKeys = groupedData.keys.toList();
+
+              return ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: groupKeys.length,
+                itemBuilder: (context, groupIndex) {
+                  final groupName = groupKeys[groupIndex];
+                  final groupDocs = groupedData[groupName]!;
+
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 20),
+                    elevation: 3,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: const BorderSide(color: Colors.teal, width: 1.5), // グループの枠線を太めにして目立たせる
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 📦 グループのデカ見出し（「2026年」や「2026年 6月」など）
+                          Row(
+                            children: [
+                              Icon(type == '週間' ? Icons.date_range : Icons.folder, color: Colors.teal),
+                              const SizedBox(width: 8),
+                              Text(
+                                groupName,
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.teal),
+                              ),
+                            ],
+                          ),
+                          const Divider(color: Colors.teal, thickness: 1),
+                          const SizedBox(height: 8),
+                          
+                          // 📜 そのグループに所属する目標たちを縦に並べる
+                          Column(
+                            children: groupDocs.map((doc) => _buildTargetTile(doc, type)).toList(),
+                          ),
+                        ],
                       ),
                     ),
                   );
-
-                  if (topLabel.isNotEmpty) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.only(left: 4, bottom: 4, top: 4),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.teal.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              topLabel.trim(),
-                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.teal),
-                            ),
-                          ),
-                        ),
-                        cardWidget,
-                      ],
-                    );
-                  }
-
-                  return cardWidget;
                 },
               );
             },
@@ -290,5 +307,68 @@ class TargetList extends StatelessWidget {
         ),
       ],
     );
+  }
+
+// ⭕ 「〇月の目標」や「第1週」をカードの上側にのせる修正版
+  Widget _buildTargetTile(DocumentSnapshot doc, String type) {
+    final data = doc.data() as Map<String, dynamic>;
+    final title = data['title'] ?? '（未入力）';
+    final monthVal = data['month'] ?? 0;
+    final week = data['week'] ?? '';
+
+    // --- 👈 1. カードの上に載せるラベルの文字を組み立てる ---
+    String topCardLabel = '';
+    if (type == '月間' && monthVal > 0) {
+      topCardLabel = '$monthVal月の目標';
+    } else if (type == '週間' && week.isNotEmpty) {
+      topCardLabel = week; // 「第1週」など
+    }
+
+    // 2. カード本体（中身はタイトルだけにスッキリさせました）
+    Widget cardWidget = Card(
+      margin: const EdgeInsets.only(bottom: 12), // カードの下側に隙間をあける
+      color: Colors.grey[50], // ほんのりグレーの背景で上品に
+      elevation: 0, // 枠線フォルダーの中なので影を無くしてスッキリ
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: Colors.grey[200]!), // 軽い枠線
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        leading: Icon(
+          type == '週間' ? Icons.looks_one : (type == '月間' ? Icons.star_half : Icons.star),
+          color: Colors.teal[400],
+        ),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 18)),
+        trailing: IconButton(
+          icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+          onPressed: () => FirebaseFirestore.instance.collection('targets').doc(doc.id).delete(),
+        ),
+      ),
+    );
+
+    // --- 👈 3. ラベルがある場合は、Columnを使ってカードの上に配置する ---
+    if (topCardLabel.isNotEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start, // 左寄せ
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 6, top: 4, bottom: 2), // ラベルの位置調整
+            child: Text(
+              topCardLabel,
+              style: TextStyle(
+                fontSize: 14, 
+                fontWeight: FontWeight.bold, 
+                color: Colors.teal[700], // 剣道アプリのテーマカラーに合わせる
+              ),
+            ),
+          ),
+          cardWidget, // ラベルのすぐ下にカードを表示
+        ],
+      );
+    }
+
+    // 年間目標など、上側ラベルがない場合はカードだけをそのまま返す
+    return cardWidget;
   }
 }
